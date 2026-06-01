@@ -15,6 +15,15 @@ jobs:
       # ----------------------------
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Checkout previous deploy
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: .previous-pages
 
       # ----------------------------
       #   Setup Python（生成 manifest/index）
@@ -51,6 +60,34 @@ jobs:
           mkdir -p out/packages
           mkdir -p out/required
 
+          if [ -d .previous-pages ]; then
+            rsync -a --exclude='.git' .previous-pages/ out/
+          fi
+
+          BASE_SHA="${{ github.event.before }}"
+          HEAD_SHA="${{ github.sha }}"
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          DIFF_ARGS=()
+
+          if [ "${{ github.event_name }}" = "push" ] && [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "$ZERO_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            DIFF_ARGS=("$BASE_SHA" "$HEAD_SHA")
+          fi
+
+          convert_svg() {
+            file="$1"
+            out_file="out/${file%.svg}.png"
+            mkdir -p "$(dirname "$out_file")"
+            echo "Convert $file -> $out_file"
+            ~/.cargo/bin/resvg "$file" "$out_file"
+          }
+
+          delete_generated_svg_png() {
+            file="$1"
+            out_file="out/${file%.svg}.png"
+            echo "Delete generated output for $file"
+            rm -f "$out_file"
+          }
+
           build_package_dir() {
             srcdir="$1"
             pkg=$(basename "$srcdir")
@@ -63,14 +100,14 @@ jobs:
               [ -f "$file" ] || continue
               cp "$file" "$outdir/"
             done
-
-            for file in "$srcdir"/*.svg; do
-              [ -f "$file" ] || continue
-              name=$(basename "$file" .svg)
-              echo "Convert $file → $name.png"
-              ~/.cargo/bin/resvg "$file" "$outdir/$name.png"
-            done
           }
+
+          echo "===== Removing deleted SVG outputs ====="
+          if [ ${#DIFF_ARGS[@]} -gt 0 ]; then
+            while IFS= read -r -d '' file; do
+              delete_generated_svg_png "$file"
+            done < <(git diff --no-renames --name-only -z --diff-filter=D "${DIFF_ARGS[@]}" -- ':(glob)packages/**/*.svg')
+          fi
 
           echo "===== Processing packages ====="
           if [ -d packages ]; then
@@ -80,12 +117,29 @@ jobs:
             done
           fi
 
+          echo "===== Converting changed SVG files ====="
+          if [ ${#DIFF_ARGS[@]} -gt 0 ]; then
+            while IFS= read -r -d '' file; do
+              [ -f "$file" ] || continue
+              convert_svg "$file"
+            done < <(git diff --no-renames --name-only -z --diff-filter=AM "${DIFF_ARGS[@]}" -- ':(glob)packages/**/*.svg')
+          fi
+
+          echo "===== Converting missing SVG outputs ====="
+          if [ -d packages ]; then
+            while IFS= read -r -d '' file; do
+              out_file="out/${file%.svg}.png"
+              [ -f "$out_file" ] && continue
+              convert_svg "$file"
+            done < <(find packages -type f -name '*.svg' -print0)
+          fi
+
+          echo "===== Removing empty package output directories ====="
+          find out/packages -type d -empty -delete
+
           echo "===== Processing required files ====="
           if [ -d required ]; then
-            for f in required/*; do
-              [ -f "$f" ] || continue
-              cp "$f" out/required/
-            done
+            rsync -a --delete required/ out/required/
           fi
 
       # ----------------------------
