@@ -1,201 +1,151 @@
 #!/usr/bin/env python3
-import sys
-import json
-import time
 import hashlib
+import json
 import re
+import sys
+import time
 from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 PACKAGES_DIR = ROOT / "packages"
-GLOBAL_DIR = ROOT / "global"
+REQUIRED_DIR = ROOT / "required"
 OUTPUT = ROOT / "index.json"
 
-OPTIONAL_FILES = {
-    "mat.png",
-    "monochrome.png",
-    "recbg.png",
-    "recfg.png",
-    "rec_night.png",
+VARIANT_BY_FILE = {
+    "monochrome.png": "monet",
+    "recbg.png": "light",
+    "recfg.png": "light",
+    "rec_night.png": "dark",
+    "mat.png": "mat",
 }
 
-VARIANT_MAP = {
-    "mat.png": ("icon", "mat"),
-    "monochrome.png": ("icon", "monochrome"),
-    "recbg.png": ("icon", "light"),
-    "recfg.png": ("icon", "light"),
-    "rec_night.png": ("icon", "dark"),
-}
-
+VARIANT_ORDER = ("monet", "light", "dark", "mat")
 SIZE_SUFFIX_RE = re.compile(r"^\d+x\d+$")
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
+    digest = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(8192):
-            h.update(chunk)
-    return h.hexdigest()
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def normalize_name(name: str) -> str:
     stem = Path(name).stem
     parts = stem.split("_")
-
     if len(parts) >= 2 and SIZE_SUFFIX_RE.match(parts[-1]):
-        base = "_".join(parts[:-1])
-    else:
-        base = stem
-
-    return f"{base}.png"
+        stem = "_".join(parts[:-1])
+    return f"{stem}.png"
 
 
 def detect_variant(name: str):
-    base_name = normalize_name(name)
-    return VARIANT_MAP.get(base_name, ("asset", None))
+    return VARIANT_BY_FILE.get(normalize_name(name))
 
 
-def is_required(name: str) -> bool:
-    base_name = normalize_name(name)
-    return base_name not in OPTIONAL_FILES
-
-
-def build_package(pkg_dir: Path):
-    files = []
-    h = hashlib.sha256()
-
-    file_list = []
-
-    for file in pkg_dir.iterdir():
-        if not file.is_file():
-            continue
-        if file.suffix != ".png":
-            continue
-
-        file_list.append(file)
-
-    for file in sorted(file_list, key=lambda x: x.name):
-        file_type, variant = detect_variant(file.name)
-
-        sha = sha256_file(file)
-        size = file.stat().st_size
-
-        entry = {
-            "file": file.name,
-            "sha256": sha,
-            "size": size,
-            "type": file_type,
-            "required": is_required(file.name),
-        }
-
-        if variant:
-            entry["variant"] = variant
-
-        files.append(entry)
-
-        h.update(file.name.encode())
-        h.update(sha.encode())
-
-    version = h.hexdigest()[:12]
-
-    return version, files
-
-
-def calc_global_version(items):
-    h = hashlib.sha256()
-    for name in sorted(items.keys()):
-        h.update(name.encode())
-        v = items[name]
-        if isinstance(v, dict):
-            h.update(v["sha256"].encode())
-        else:
-            h.update(v.encode())
-    return h.hexdigest()[:12]
-
-
-def build_global():
-    files = {}
-    packages = {}
-
-    if not GLOBAL_DIR.exists():
-        return {"version": "0", "files": {}, "packages": {}}
-
-    for entry in GLOBAL_DIR.iterdir():
-        if entry.is_file():
-            files[entry.name] = {
-                "sha256": sha256_file(entry),
-                "size": entry.stat().st_size,
-            }
-
-        elif entry.is_dir():
-            version, file_list = build_package(entry)
-
-            simple_files = {
-                f["file"]: {
-                    "sha256": f["sha256"],
-                    "size": f["size"],
-                }
-                for f in file_list
-            }
-
-            packages[entry.name] = {
-                "version": version,
-                "files": simple_files,
-            }
-
-    combined = {
-        **{k: v["sha256"] for k, v in files.items()},
-        **{k: v["version"] for k, v in packages.items()},
+def build_file_entry(file_path: Path, relative_path: str) -> dict:
+    return {
+        "file": file_path.name,
+        "path": relative_path,
+        "sha256": sha256_file(file_path),
+        "size": file_path.stat().st_size,
     }
 
-    version = calc_global_version(combined)
 
-    return {"version": version, "files": files, "packages": packages}
+def calc_version(entries: list[tuple[str, str]]) -> str:
+    digest = hashlib.sha256()
+    for key, value in sorted(entries):
+        digest.update(key.encode())
+        digest.update(value.encode())
+    return digest.hexdigest()[:12]
 
 
-def build_packages():
-    pkgs = {}
+def sort_entries(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda item: item["file"])
 
-    if not PACKAGES_DIR.exists():
-        return pkgs
 
-    for pkg_dir in PACKAGES_DIR.iterdir():
-        if not pkg_dir.is_dir():
+def build_package(pkg_dir: Path) -> dict:
+    required = []
+    variants = {name: [] for name in VARIANT_ORDER}
+    version_parts = []
+    total_files = 0
+
+    for file_path in sorted(pkg_dir.iterdir(), key=lambda item: item.name):
+        if not file_path.is_file() or file_path.suffix != ".png":
             continue
 
-        version, file_list = build_package(pkg_dir)
+        total_files += 1
+        entry = build_file_entry(file_path, f"packages/{pkg_dir.name}/{file_path.name}")
+        version_parts.append((file_path.name, entry["sha256"]))
 
-        files = {}
-        for f in file_list:
-            entry = {
-                "sha256": f["sha256"],
-                "size": f["size"],
-                "type": f["type"],
-                "required": f["required"],
-            }
-            if "variant" in f:
-                entry["variant"] = f["variant"]
+        variant = detect_variant(file_path.name)
+        if variant:
+            variants[variant].append(entry)
+        else:
+            required.append(entry)
 
-            files[f["file"]] = entry
+    return {
+        "path": f"packages/{pkg_dir.name}",
+        "version": calc_version(version_parts) if version_parts else "0",
+        "count": total_files,
+        "required": sort_entries(required),
+        "variants": {
+            name: sort_entries(items) for name, items in variants.items() if items
+        },
+    }
 
-        pkgs[pkg_dir.name] = {
-            "version": version,
-            "count": len(files),
-            "files": files,
-        }
 
-    return pkgs
+def build_packages() -> dict:
+    packages = {}
+    if not PACKAGES_DIR.exists():
+        return packages
+
+    for pkg_dir in sorted(PACKAGES_DIR.iterdir(), key=lambda item: item.name):
+        if pkg_dir.is_dir():
+            packages[pkg_dir.name] = build_package(pkg_dir)
+
+    return packages
+
+
+def build_required_files() -> list[dict]:
+    if not REQUIRED_DIR.exists():
+        return []
+
+    entries = []
+    for file_path in sorted(REQUIRED_DIR.iterdir(), key=lambda item: item.name):
+        if file_path.is_file():
+            entries.append(build_file_entry(file_path, f"required/{file_path.name}"))
+    return entries
+
+
+def build_repo_version(packages: dict, required_files: list[dict]) -> str:
+    parts = []
+    for pkg_name, pkg_info in sorted(packages.items()):
+        parts.append((f"pkg:{pkg_name}", pkg_info["version"]))
+    for entry in required_files:
+        parts.append((f"file:{entry['file']}", entry["sha256"]))
+    return calc_version(parts) if parts else "0"
 
 
 def main():
+    packages = build_packages()
+    required_files = build_required_files()
+
     index = {
-        "repo_version": 1,
+        "repo_version": 2,
         "generated_at": int(time.time()),
-        "global": build_global(),
-        "packages": build_packages(),
+        "version": build_repo_version(packages, required_files),
+        "variant_definitions": {
+            "monet": ["monochrome*.png"],
+            "light": ["recbg*.png", "recfg*.png"],
+            "dark": ["rec_night*.png"],
+            "mat": ["mat*.png"],
+        },
+        "required_files": required_files,
+        "packages": packages,
     }
 
-    with open(OUTPUT, "w") as f:
+    with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(index, f, separators=(",", ":"), ensure_ascii=False)
 
     print(f"index.json generated at {OUTPUT}")

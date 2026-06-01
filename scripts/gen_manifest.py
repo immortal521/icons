@@ -1,122 +1,97 @@
 #!/usr/bin/env python3
 
-import sys
-import json
 import hashlib
+import json
 import re
+import sys
 from pathlib import Path
 
 PACKAGES_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "packages")
 
-OPTIONAL_FILES = {
-    "mat.png",
-    "monochrome.png",
-    "recbg.png",
-    "recfg.png",
-    "rec_night.png",
+VARIANT_BY_FILE = {
+    "monochrome.png": "monet",
+    "recbg.png": "light",
+    "recfg.png": "light",
+    "rec_night.png": "dark",
+    "mat.png": "mat",
 }
 
-VARIANT_MAP = {
-    "mat.png": ("icon", "mat"),
-    "monochrome.png": ("icon", "monochrome"),
-    "recbg.png": ("icon", "light"),
-    "recfg.png": ("icon", "light"),
-    "rec_night.png": ("icon", "dark"),
-}
-
+VARIANT_ORDER = ("monet", "light", "dark", "mat")
 SIZE_SUFFIX_RE = re.compile(r"^\d+x\d+$")
 
 
 def normalize_name(name: str) -> str:
-    """
-    将带尺寸的文件名归一化：
-    recbg_1x2.png -> recbg.png
-    monochrome_2x1.png -> monochrome.png
-    """
     stem = Path(name).stem
     parts = stem.split("_")
-
     if len(parts) >= 2 and SIZE_SUFFIX_RE.match(parts[-1]):
-        base = "_".join(parts[:-1])
-    else:
-        base = stem
-
-    return f"{base}.png"
+        stem = "_".join(parts[:-1])
+    return f"{stem}.png"
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
+    digest = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(8192):
-            h.update(chunk)
-    return h.hexdigest()
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def detect_variant(name: str):
-    base_name = normalize_name(name)
-    return VARIANT_MAP.get(base_name, ("asset", None))
+    return VARIANT_BY_FILE.get(normalize_name(name))
 
 
-def is_required(name: str) -> bool:
-    base_name = normalize_name(name)
-    return base_name not in OPTIONAL_FILES
+def calc_version(pkg_dir: Path) -> str:
+    parts = []
+    for file_path in sorted(pkg_dir.iterdir(), key=lambda item: item.name):
+        if file_path.is_file() and file_path.suffix == ".png" and file_path.name != "manifest.json":
+            parts.append((file_path.name, sha256_file(file_path)))
+
+    digest = hashlib.sha256()
+    for name, sha in parts:
+        digest.update(name.encode())
+        digest.update(sha.encode())
+    return digest.hexdigest()[:12] if parts else "0"
 
 
-def calc_version_from_dir(pkg_dir: Path) -> str:
-    """目录级 version，只在目录内容变化时更新"""
-    h = hashlib.sha256()
-    files = []
+def build_entry(file_path: Path) -> dict:
+    return {
+        "file": file_path.name,
+        "sha256": sha256_file(file_path),
+        "size": file_path.stat().st_size,
+    }
 
-    for f in pkg_dir.iterdir():
-        if not f.is_file():
-            continue
-        if f.name == "manifest.json":
-            continue
-        if f.suffix not in [".png"]:
-            continue
-        files.append(f)
 
-    for f in sorted(files, key=lambda x: x.name):
-        h.update(f.name.encode())
-        with open(f, "rb") as fp:
-            while chunk := fp.read(8192):
-                h.update(chunk)
-
-    return h.hexdigest()[:12]
+def sort_entries(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda item: item["file"])
 
 
 def build_manifest(pkg_dir: Path):
-    files = []
+    required = []
+    variants = {name: [] for name in VARIANT_ORDER}
+    count = 0
 
-    for file in pkg_dir.iterdir():
-        if not file.is_file():
+    for file_path in sorted(pkg_dir.iterdir(), key=lambda item: item.name):
+        if not file_path.is_file():
             continue
-        if file.name == "manifest.json":
-            continue
-        if file.suffix not in [".png"]:
+        if file_path.name == "manifest.json" or file_path.suffix != ".png":
             continue
 
-        file_type, variant = detect_variant(file.name)
-
-        entry = {
-            "file": file.name,
-            "type": file_type,
-            "required": is_required(file.name),
-            "sha256": sha256_file(file),
-            "size": file.stat().st_size,
-        }
-
+        count += 1
+        entry = build_entry(file_path)
+        variant = detect_variant(file_path.name)
         if variant:
-            entry["variant"] = variant
+            variants[variant].append(entry)
+        else:
+            required.append(entry)
 
-        files.append(entry)
-
-    manifest = {
-        "version": calc_version_from_dir(pkg_dir),
-        "files": sorted(files, key=lambda x: x["file"]),
+    return {
+        "version": calc_version(pkg_dir),
+        "count": count,
+        "required": sort_entries(required),
+        "variants": {
+            name: sort_entries(items) for name, items in variants.items() if items
+        },
     }
-
-    return manifest
 
 
 def main():

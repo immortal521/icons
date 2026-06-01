@@ -18,18 +18,28 @@
 ## 目录结构
 
 ```
-├── global           # 全局通用资源
-├── packages         # 核心图标库（以应用包名命名）
+├── packages         # 图标包目录（以应用包名命名）
 │   └── com.example  # 示例包名
 │       ├── monochrome.svg
 │       └── recfg.svg
+├── required         # 必须下载的额外适配文件
 ├── scripts          # 自动化脚本 (HTML/Manifest/Index 生成)
 └── README.md
 ```
 
 ## 贡献指南
 
-适配新应用时，请在 packages 目录下新建包名文件夹，并参考以下规范：
+适配新应用时，请在 `packages` 目录下新建包名文件夹。仓库不再区分 `global/package`；所有图标都属于包内容。原先那类顶层软件专用适配文件统一放在 `required/`，并作为必须下载资源发布。
+
+文件分组规则如下：
+
+- `monochrome*.svg/png` 归类为 `monet`
+- `recbg*.svg/png` 与 `recfg*.svg/png` 归类为 `light`
+- `rec_night*.svg/png` 归类为 `dark`
+- `mat*.svg/png` 归类为 `mat`
+- 其他命名全部视为必须下载文件
+
+并参考以下规范：
 
 1. 尺寸规范
    | 尺寸 | 像素 |
@@ -59,5 +69,5 @@
 
 ## 免责声明
 
-所有应用图标及相关视觉资产均归其各自的原始开发者或版权持有者所有。  
+所有应用图标及相关视觉资产均归其各自的原始开发者或版权持有者所有。
 本仓库仅提供在ColorOS生态系统内使用的二次改编和格式调整，不声明对任何原始图标设计拥有所有权。

@@ -18,18 +18,28 @@ It includes classic, dark mode, Material, and Monet dynamic color icons.
 ## Directory Structure
 
 ```
-├── global # Global shared resources
-├── packages # Core icon library (named by application package name)
+├── packages # Icon packages (named by application package name)
 │ └── com.example # Example package name
 │ ├── monochrome.svg
 │ └── recfg.svg
+├── required # Required extra adaptation files
 ├── scripts # Automation scripts (HTML/Manifest/Index generation)
 └── README.md
 ```
 
 ## Contribution Guidelines
 
-When adapting a new application, create a new folder under the `packages` directory using the package name, and follow the specifications below:
+When adapting a new application, create a new folder under `packages`. The repository no longer separates `global/package`; all icons are treated as package content. Software-specific loose adaptation files belong in `required/` and are published as mandatory downloads.
+
+File grouping rules:
+
+- `monochrome*.svg/png` is grouped as `monet`
+- `recbg*.svg/png` and `recfg*.svg/png` are grouped as `light`
+- `rec_night*.svg/png` is grouped as `dark`
+- `mat*.svg/png` is grouped as `mat`
+- Any other filename is treated as a required file
+
+Then follow the specifications below:
 
 ### 1. Size Specifications
 

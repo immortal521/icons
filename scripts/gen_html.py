@@ -186,6 +186,31 @@ def get_suffix(filename, prefix):
     return filename.replace(prefix, "").replace(".png", "")
 
 
+def flatten_package_files(pkg_info):
+    files = []
+
+    for entry in pkg_info.get("required", []):
+        files.append(
+            {
+                "bucket": "required",
+                "variant": None,
+                **entry,
+            }
+        )
+
+    for variant_name, entries in pkg_info.get("variants", {}).items():
+        for entry in entries:
+            files.append(
+                {
+                    "bucket": "variant",
+                    "variant": variant_name,
+                    **entry,
+                }
+            )
+
+    return files
+
+
 def main():
     if not INDEX_FILE.exists():
         print(f"Error: {INDEX_FILE} not found")
@@ -195,15 +220,8 @@ def main():
         index = json.load(f)
 
     raw_pkgs = index.get("packages", {})
-    global_pkgs = index.get("global", {}).get("packages", {})
-
-    all_packages = []
-    for pkg_name, pkg_info in raw_pkgs.items():
-        pkg_info["_root_dir"] = f"packages/{pkg_name}"
-        all_packages.append((pkg_name, pkg_info))
-    for pkg_name, pkg_info in global_pkgs.items():
-        pkg_info["_root_dir"] = f"global/{pkg_name}"
-        all_packages.append((pkg_name, pkg_info))
+    all_packages = sorted(raw_pkgs.items(), key=lambda item: item[0])
+    required_files = index.get("required_files", [])
 
     html_lines = [
         "<!DOCTYPE html><html>",
@@ -212,16 +230,27 @@ def main():
         '<div class="search-container"><input type="text" id="search-input" placeholder="Search packages..."></div>',
     ]
 
-    for pkg_name, pkg_info in sorted(all_packages, key=lambda x: x[0]):
-        pkg_version = pkg_info.get("version", "0.0.1")
-        pkg_dir = pkg_info["_root_dir"]
-        pkg_files = pkg_info.get("files", {})
+    if required_files:
+        html_lines.append("<div class='pkg-section' data-pkg='shared-required-files'>")
+        html_lines.append(
+            "<h2><span class='pkg-name'>shared required files</span><span class='pkg-version'>mandatory</span></h2><div class='files'>"
+        )
 
-        files_list = []
-        for f_name, f_data in pkg_files.items():
-            file_entry = {"file": f_name}
-            file_entry.update(f_data)
-            files_list.append(file_entry)
+        for entry in required_files:
+            html_lines.append(f"""
+            <div class='file-card'>
+                <div class='img-wrapper'><div class='img-container'>📦</div></div>
+                <div class='card-footer'>
+                    <div class='filename'>{entry["file"]}</div>
+                    <div class='meta'>{entry.get("size", 0)} B</div>
+                </div>
+            </div>""")
+
+        html_lines.append("</div></div>")
+
+    for pkg_name, pkg_info in all_packages:
+        pkg_version = pkg_info.get("version", "0.0.1")
+        files_list = flatten_package_files(pkg_info)
 
         html_lines.append(f"<div class='pkg-section' data-pkg='{pkg_name}'>")
         html_lines.append(
@@ -241,8 +270,8 @@ def main():
                         "type": "light-pair",
                         "files": [bg, fg],
                         "name": f"light{suffix}",
-                        "meta": "Layered",
-                    }
+                    "meta": "Light",
+                }
                 )
                 skip_files.update([fg["file"], bg_name])
             else:
@@ -256,7 +285,7 @@ def main():
                     "type": "night-mode",
                     "file": n,
                     "name": f"night{suffix}",
-                    "meta": "Night Mode",
+                    "meta": "Dark",
                 }
             )
             skip_files.add(n["file"])
@@ -264,12 +293,19 @@ def main():
         for f in files_list:
             if f["file"] in skip_files or f["file"].startswith("recbg"):
                 continue
+
+            meta = f"{f.get('size', 0)} B"
+            if f.get("variant"):
+                meta = f"{f['variant']} · {meta}"
+            elif f.get("bucket") == "required":
+                meta = f"required · {meta}"
+
             display_items.append(
                 {
                     "type": "single",
                     "data": f,
                     "name": f["file"],
-                    "meta": f"{f.get('size', 0)} B",
+                    "meta": meta,
                 }
             )
 
@@ -280,19 +316,20 @@ def main():
             if item["type"] == "light-pair":
                 grid_cls = get_grid_class(item["files"][1]["file"])
                 img_html = f"""<div class='img-container special-container {grid_cls} {mono_cls}'>
-                                <img data-src='{pkg_dir}/{item["files"][0]["file"]}?v={BUILD_ID}' style='z-index:1'>
-                                <img data-src='{pkg_dir}/{item["files"][1]["file"]}?v={BUILD_ID}' style='z-index:2'>
+                                <img data-src='{item["files"][0]["path"]}?v={BUILD_ID}' style='z-index:1'>
+                                <img data-src='{item["files"][1]["path"]}?v={BUILD_ID}' style='z-index:2'>
                               </div>"""
             elif item["type"] == "night-mode":
                 grid_cls = get_grid_class(item["file"]["file"])
                 img_html = f"""<div class='img-container special-container night-bg {grid_cls}'>
-                                <img data-src='{pkg_dir}/{item["file"]["file"]}?v={BUILD_ID}' style='z-index:2'>
+                                <img data-src='{item["file"]["path"]}?v={BUILD_ID}' style='z-index:2'>
                               </div>"""
             else:
                 grid_cls = get_grid_class(item["data"]["file"])
+                f_path = item["data"]["path"]
                 f_name = item["data"]["file"]
                 if f_name.lower().endswith((".png", ".jpg", ".svg", ".webp")):
-                    content = f"<img data-src='{pkg_dir}/{f_name}?v={BUILD_ID}'>"
+                    content = f"<img data-src='{f_path}?v={BUILD_ID}'>"
                 else:
                     content = "📄"
                 img_html = (

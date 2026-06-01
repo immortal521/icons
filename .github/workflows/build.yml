@@ -49,62 +49,42 @@ jobs:
           set -e
 
           mkdir -p out/packages
-          mkdir -p out/global
+          mkdir -p out/required
+
+          build_package_dir() {
+            srcdir="$1"
+            pkg=$(basename "$srcdir")
+            outdir="out/packages/$pkg"
+            mkdir -p "$outdir"
+
+            echo ">> Package: $pkg"
+
+            for file in "$srcdir"/*.png; do
+              [ -f "$file" ] || continue
+              cp "$file" "$outdir/"
+            done
+
+            for file in "$srcdir"/*.svg; do
+              [ -f "$file" ] || continue
+              name=$(basename "$file" .svg)
+              echo "Convert $file → $name.png"
+              ~/.cargo/bin/resvg "$file" "$outdir/$name.png"
+            done
+          }
 
           echo "===== Processing packages ====="
           if [ -d packages ]; then
             for dir in packages/*; do
               [ -d "$dir" ] || continue
-              pkg=$(basename "$dir")
-              outdir="out/packages/$pkg"
-              mkdir -p "$outdir"
-
-              echo ">> Package: $pkg"
-
-              # 复制已有 PNG
-              for file in "$dir"/*.png; do
-                [ -f "$file" ] || continue
-                cp "$file" "$outdir/"
-              done
-
-              # SVG → PNG
-              for file in "$dir"/*.svg; do
-                [ -f "$file" ] || continue
-                name=$(basename "$file" .svg)
-                echo "Convert $file → $name.png"
-                ~/.cargo/bin/resvg "$file" "$outdir/$name.png"
-              done
+              build_package_dir "$dir"
             done
           fi
 
-          echo "===== Processing global ====="
-          if [ -d global ]; then
-            for f in global/*; do
-              [ -e "$f" ] || continue
-              if [ -d "$f" ]; then
-                # 文件夹 -> out/global/ 文件夹
-                outdir="out/global/$(basename "$f")"
-                mkdir -p "$outdir"
-
-                echo ">> Package: $outdir"
-
-                # 复制 PNG
-                for file in "$f"/*.png; do
-                  [ -f "$file" ] || continue
-                  cp "$file" "$outdir/"
-                done
-
-                # SVG -> PNG
-                for file in "$f"/*.svg; do
-                  [ -f "$file" ] || continue
-                  name=$(basename "$file" .svg)
-                  echo "Convert $file → $name.png"
-                  ~/.cargo/bin/resvg "$file" "$outdir/$name.png"
-                done
-              else
-                # 保留原来的散文件
-                cp "$f" out/global/
-              fi
+          echo "===== Processing required files ====="
+          if [ -d required ]; then
+            for f in required/*; do
+              [ -f "$f" ] || continue
+              cp "$f" out/required/
             done
           fi
 
