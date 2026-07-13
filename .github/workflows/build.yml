@@ -187,10 +187,8 @@ jobs:
       #   Deploy to Cloudflare Pages
       # ----------------------------
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: "colorosicons"
-          directory: "./out"
-          branch: "main"
+          command: pages deploy ./out --project-name=colorosicons --branch=main
